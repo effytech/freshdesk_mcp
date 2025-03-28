@@ -426,6 +426,68 @@ async def update_contact(contact_id: int, contact_fields: Dict[str, Any])-> Dict
     async with httpx.AsyncClient() as client:
         response = await client.put(url, headers=headers, json=data)
         return response.json()
+@mcp.tool()
+async def list_canned_responses(folder_id: int)-> list[Dict[str, Any]]:
+    """List all canned responses in Freshdesk."""
+    url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/canned_response_folders/{folder_id}/responses"
+    headers = {
+        "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
+    }
+    canned_responses = []
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)   
+        for canned_response in response.json():
+            canned_responses.append(canned_response)
+    return canned_responses
+
+@mcp.tool()
+async def list_canned_response_folders()-> list[Dict[str, Any]]:
+    """List all canned response folders in Freshdesk."""
+    url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/canned_response_folders"
+    headers = {
+        "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
+    }
+    async with httpx.AsyncClient() as client:   
+        response = await client.get(url, headers=headers)
+        return response.json()
+
+@mcp.tool()
+async def list_solution_articles(folder_id: int)-> list[Dict[str, Any]]:
+    """List all solution articles in Freshdesk."""
+    solution_articles = []
+    url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/solutions/folders/{folder_id}/articles"
+    headers = {
+        "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
+        for article in response.json():
+            solution_articles.append(article)
+    return solution_articles
+
+@mcp.tool()
+async def list_solution_folders(category_id: int)-> list[Dict[str, Any]]:
+    if not category_id:
+        return {"error": "Category ID is required"}
+    """List all solution folders in Freshdesk."""
+    url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/solutions/categories/{category_id}/folders"
+    headers = {
+        "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
+        return response.json()
+    
+@mcp.tool()
+async def list_solution_categories()-> list[Dict[str, Any]]:
+    """List all solution categories in Freshdesk."""
+    url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/solutions/categories"
+    headers = {
+        "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
+        return response.json()
 
 def main():
     logging.info("Starting Freshdesk MCP server")
