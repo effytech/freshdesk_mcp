@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/effytech-freshdesk-mcp-badge.png)](https://mseep.ai/app/effytech-freshdesk-mcp)
+
 # Freshdesk MCP Server
 [![smithery badge](https://smithery.ai/badge/@effytech/freshdesk_mcp)](https://smithery.ai/server/@effytech/freshdesk_mcp)
 
