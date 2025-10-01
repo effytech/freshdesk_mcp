@@ -1245,7 +1245,8 @@ async def delete_ticket_summary(ticket_id: int) -> Dict[str, Any]:
 
 def main():
     logging.info("Starting Freshdesk MCP server")
-    mcp.run(transport='stdio')
+    mcp.run(transport="sse")
+
 
 if __name__ == "__main__":
     main()

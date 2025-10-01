@@ -216,9 +216,6 @@ uvx freshdesk-mcp --env FRESHDESK_API_KEY=<your_api_key> --env FRESHDESK_DOMAIN=
 - Check API rate limits and quotas
 - Verify the `uvx` command is available in your PATH
 
-## SSE Support 
-
-
 ## License
 
 This MCP server is licensed under the MIT License. See the LICENSE file in the project repository for full details.
