@@ -163,7 +163,14 @@ class CannedResponseCreate(BaseModel):
 
 @mcp.tool()
 async def get_ticket_fields() -> Dict[str, Any]:
-    """Get ticket fields from Freshdesk."""
+    """Get all ticket fields from Freshdesk.
+
+    Returns the list of ticket fields including custom fields.
+    Use this to discover field names, types, and valid values for filtering and creating tickets.
+
+    Returns:
+        List of field definitions with name, label, type, and choices (for dropdowns)
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/ticket_fields"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
@@ -174,8 +181,46 @@ async def get_ticket_fields() -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def get_tickets(page: Optional[int] = 1, per_page: Optional[int] = 30) -> Dict[str, Any]:
-    """Get tickets from Freshdesk with pagination support."""
+async def get_tickets(
+    company_id: Optional[int] = None,
+    requester_id: Optional[int] = None,
+    email: Optional[str] = None,
+    updated_since: Optional[str] = None,
+    filter: Optional[str] = None,
+    include: Optional[str] = None,
+    order_by: Optional[str] = None,
+    order_type: Optional[str] = None,
+    page: Optional[int] = 1,
+    per_page: Optional[int] = 30
+) -> Dict[str, Any]:
+    """Get tickets from Freshdesk with filtering and pagination support.
+
+    CRITICAL: By default, only tickets created in the past 30 DAYS are returned!
+    To get older tickets, you MUST use the updated_since parameter.
+
+    This endpoint supports filtering by company_id, requester_id, email, etc.
+    For query-based filtering (status, priority, tags, etc.), use search_tickets instead.
+
+    Args:
+        company_id: Filter tickets by company ID (use this instead of search_tickets for company filtering)
+        requester_id: Filter tickets by requester ID
+        email: Filter tickets by requester email (must be URL encoded if contains special chars)
+        updated_since: ISO 8601 timestamp (e.g. '2024-01-01T00:00:00Z'). REQUIRED for tickets older than 30 days!
+        filter: Predefined filter ('new_and_my_open', 'watching', 'spam', 'deleted')
+        include: Embed additional data: 'stats', 'requester', 'company', 'description' (comma-separated, each costs +1 API credit). Note: 'description' is REQUIRED for accounts created after 2018-11-30.
+        order_by: Sort field ('created_at', 'due_by', 'updated_at', 'status')
+        order_type: Sort order ('asc' or 'desc', default: 'desc')
+        page: Page number (default: 1)
+        per_page: Results per page (1-100, default: 30)
+
+    Returns:
+        Dict with tickets array and pagination info
+
+    Limitations:
+        - Max 300 pages (30,000 tickets total)
+        - Default returns only last 30 days of tickets
+        - Deleted/spam tickets excluded unless using those filters
+    """
     # Validate input parameters
     if page < 1:
         return {"error": "Page number must be greater than 0"}
@@ -185,10 +230,28 @@ async def get_tickets(page: Optional[int] = 1, per_page: Optional[int] = 30) -> 
 
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets"
 
+    # Build params dynamically, only including non-None values
     params = {
         "page": page,
         "per_page": per_page
     }
+
+    if company_id is not None:
+        params["company_id"] = company_id
+    if requester_id is not None:
+        params["requester_id"] = requester_id
+    if email is not None:
+        params["email"] = email
+    if updated_since is not None:
+        params["updated_since"] = updated_since
+    if filter is not None:
+        params["filter"] = filter
+    if include is not None:
+        params["include"] = include
+    if order_by is not None:
+        params["order_by"] = order_by
+    if order_type is not None:
+        params["order_type"] = order_type
 
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}",
@@ -359,7 +422,16 @@ async def update_ticket(ticket_id: int, ticket_fields: Dict[str, Any]) -> Dict[s
 
 @mcp.tool()
 async def delete_ticket(ticket_id: int) -> str:
-    """Delete a ticket in Freshdesk."""
+    """Delete a ticket in Freshdesk.
+
+    WARNING: This permanently deletes the ticket. Use with caution.
+
+    Args:
+        ticket_id: The ID of the ticket to delete
+
+    Returns:
+        Empty response on success, error details on failure
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets/{ticket_id}"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
@@ -369,39 +441,135 @@ async def delete_ticket(ticket_id: int) -> str:
         return response.json()
 
 @mcp.tool()
-async def get_ticket(ticket_id: int):
-    """Get a ticket in Freshdesk."""
+async def get_ticket(ticket_id: int, include: Optional[str] = None):
+    """Get a single ticket by ID from Freshdesk.
+
+    Args:
+        ticket_id: The ID of the ticket to retrieve
+        include: Embed additional data (comma-separated): 'stats', 'conversations', 'requester', 'company'.
+                 Each inclusion costs +1 API credit.
+
+    CRITICAL LIMITATION for 'conversations':
+        When include='conversations', only the OLDEST 10 conversations are returned,
+        sorted by created_at ascending. This is NOT the full conversation history!
+        To get ALL conversations, use get_ticket_conversation(ticket_id) instead,
+        which auto-paginates and returns the complete history.
+
+    Returns:
+        Ticket object with all fields. Use include parameter for embedded related data.
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets/{ticket_id}"
+    params = {}
+    if include is not None:
+        params["include"] = include
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
     }
 
     async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers)
+        response = await client.get(url, headers=headers, params=params if params else None)
         return response.json()
 
 @mcp.tool()
 async def search_tickets(query: str) -> Dict[str, Any]:
-    """Search for tickets in Freshdesk."""
+    """Search for tickets in Freshdesk using the Filter Tickets API.
+
+    IMPORTANT: This API has strict limitations on searchable fields.
+
+    Supported fields in query:
+        - agent_id: e.g. "agent_id:123"
+        - group_id: e.g. "group_id:11"
+        - priority: e.g. "priority:3" or "priority:>3" (1=Low, 2=Medium, 3=High, 4=Urgent)
+        - status: e.g. "status:2" (2=Open, 3=Pending, 4=Resolved, 5=Closed)
+        - tag: e.g. "tag:'billing'"
+        - type: e.g. "type:'Incident'"
+        - due_by: e.g. "due_by:>'2024-01-01'" (date format: 'YYYY-MM-DD')
+        - fr_due_by: e.g. "fr_due_by:<'2024-06-01'" (first response due by)
+        - created_at: e.g. "created_at:>'2024-01-01'" (date format: 'YYYY-MM-DD')
+        - updated_at: e.g. "updated_at:<'2024-06-01'" (date format: 'YYYY-MM-DD')
+        - Custom fields: e.g. "cf_fieldname:'value'" (use cf_ prefix)
+
+    NOT supported (will return 400 "Validation failed" error):
+        - requester_id: Use get_tickets(requester_id=...) instead
+        - company_id: Use get_tickets(company_id=...) instead
+        - description, subject: Not searchable
+        - responder_id: Not filterable
+
+    Query syntax:
+        - Do NOT wrap in double quotes - it will be done automatically
+        - Max 512 characters
+        - Operators: AND, OR, (), :> (>=), :< (<=)
+        - Dates MUST be in 'YYYY-MM-DD' format with single quotes
+
+    Args:
+        query: Search query string (e.g. "priority:>3 AND status:2")
+               Do NOT wrap in double quotes - handled automatically.
+
+    Returns:
+        Dict with matching tickets (max 300 results across 10 pages)
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/search/tickets"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
     }
-    params = {"query": query}
+    # Freshdesk API requires query to be wrapped in double quotes
+    # Strip any existing quotes and re-wrap to ensure correct format
+    clean_query = query.strip('"')
+    params = {"query": f'"{clean_query}"'}
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=headers, params=params)
         return response.json()
 
 @mcp.tool()
-async def get_ticket_conversation(ticket_id: int)-> list[Dict[str, Any]]:
-    """Get a ticket conversation in Freshdesk."""
+async def get_ticket_conversation(ticket_id: int) -> list[Dict[str, Any]]:
+    """Get ALL conversations for a ticket in Freshdesk.
+
+    This function automatically paginates through all pages to return the complete
+    conversation history. Conversations are returned sorted by created_at ascending
+    (oldest first).
+
+    Freshdesk API Behavior:
+        - Default page size: 30 conversations per page
+        - Max per_page: 100 (used here to minimize API calls)
+        - This function fetches ALL pages automatically
+
+    Args:
+        ticket_id: The ID of the ticket to get conversations for.
+
+    Returns:
+        list[Dict[str, Any]]: Complete list of all conversations for the ticket.
+        Each conversation includes: id, body, body_text, incoming, private,
+        user_id, support_email, to_emails, from_email, cc_emails, bcc_emails,
+        created_at, updated_at, attachments, source, ticket_id, etc.
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets/{ticket_id}/conversations"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
     }
+
+    all_conversations: list[Dict[str, Any]] = []
+    page = 1
+    per_page = 100  # Use max to minimize API calls
+
     async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers)
-        return response.json()
+        while True:
+            params = {"page": page, "per_page": per_page}
+            response = await client.get(url, headers=headers, params=params)
+            conversations = response.json()
+
+            # Handle error responses or empty results
+            if not conversations or not isinstance(conversations, list):
+                break
+
+            all_conversations.extend(conversations)
+
+            # If we got fewer than requested, we've reached the end
+            if len(conversations) < per_page:
+                break
+
+            page += 1
+
+    return all_conversations
 
 @mcp.tool()
 async def create_ticket_reply(ticket_id: int,body: str)-> Dict[str, Any]:
@@ -450,8 +618,36 @@ async def update_ticket_conversation(conversation_id: int,body: str)-> Dict[str,
             return f"Cannot update conversation ${response.json()}"
 
 @mcp.tool()
-async def get_agents(page: Optional[int] = 1, per_page: Optional[int] = 30)-> list[Dict[str, Any]]:
-    """Get all agents in Freshdesk with pagination support."""
+async def get_agents(
+    email: Optional[str] = None,
+    mobile: Optional[str] = None,
+    phone: Optional[str] = None,
+    state: Optional[str] = None,
+    page: Optional[int] = 1,
+    per_page: Optional[int] = 30
+) -> list[Dict[str, Any]]:
+    """List agents in Freshdesk with optional filtering and pagination.
+
+    Pagination:
+        - Default: 30 agents per page
+        - Max per_page: 100
+        - Use page parameter to iterate through results
+        - Check if returned count < per_page to detect last page
+
+    Args:
+        email: Filter by exact agent email (unique, returns one agent)
+        mobile: Filter by mobile number
+        phone: Filter by phone number
+        state: Filter by state ('fulltime', 'occasional')
+        page: Page number (default: 1)
+        per_page: Results per page (1-100, default: 30)
+
+    Returns:
+        List of agent objects. Each agent includes:
+        - id, available, occasional, signature, ticket_scope
+        - contact: nested object with email, name, phone, mobile, language, time_zone
+        - group_ids, role_ids, skill_ids, focus_mode
+    """
     # Validate input parameters
     if page < 1:
         return {"error": "Page number must be greater than 0"}
@@ -466,13 +662,56 @@ async def get_agents(page: Optional[int] = 1, per_page: Optional[int] = 30)-> li
         "page": page,
         "per_page": per_page
     }
+    if email is not None:
+        params["email"] = email
+    if mobile is not None:
+        params["mobile"] = mobile
+    if phone is not None:
+        params["phone"] = phone
+    if state is not None:
+        params["state"] = state
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=headers, params=params)
         return response.json()
 
 @mcp.tool()
-async def list_contacts(page: Optional[int] = 1, per_page: Optional[int] = 30)-> list[Dict[str, Any]]:
-    """List all contacts in Freshdesk with pagination support."""
+async def list_contacts(
+    email: Optional[str] = None,
+    mobile: Optional[str] = None,
+    phone: Optional[str] = None,
+    company_id: Optional[int] = None,
+    state: Optional[str] = None,
+    updated_since: Optional[str] = None,
+    page: Optional[int] = 1,
+    per_page: Optional[int] = 30
+) -> list[Dict[str, Any]]:
+    """List contacts in Freshdesk with optional filtering and pagination.
+
+    Pagination:
+        - Default: 30 contacts per page
+        - Max per_page: 100
+        - Use page parameter to iterate through results
+        - Check if returned count < per_page to detect last page
+
+    By default, only unblocked and undeleted contacts are returned.
+
+    Args:
+        email: Filter by exact email address (unique, returns one contact)
+        mobile: Filter by mobile number
+        phone: Filter by phone number
+        company_id: Filter by company ID (get all contacts in a company)
+        state: Filter by state ('blocked', 'deleted', 'unverified', 'verified')
+        updated_since: ISO 8601 timestamp (e.g. '2024-01-01T00:00:00Z')
+        page: Page number (default: 1)
+        per_page: Results per page (1-100, default: 30)
+
+    Returns:
+        List of contact objects. Each contact includes:
+        - id, name, email, phone, mobile, address, description
+        - company_id, active, job_title, language, time_zone
+        - twitter_id, other_companies, custom_fields
+        - created_at, updated_at
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/contacts"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
@@ -481,13 +720,32 @@ async def list_contacts(page: Optional[int] = 1, per_page: Optional[int] = 30)->
         "page": page,
         "per_page": per_page
     }
+    if email is not None:
+        params["email"] = email
+    if mobile is not None:
+        params["mobile"] = mobile
+    if phone is not None:
+        params["phone"] = phone
+    if company_id is not None:
+        params["company_id"] = company_id
+    if state is not None:
+        params["state"] = state
+    if updated_since is not None:
+        params["_updated_since"] = updated_since
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=headers, params=params)
         return response.json()
 
 @mcp.tool()
-async def get_contact(contact_id: int)-> Dict[str, Any]:
-    """Get a contact in Freshdesk."""
+async def get_contact(contact_id: int) -> Dict[str, Any]:
+    """Get a single contact by ID from Freshdesk.
+
+    Args:
+        contact_id: The ID of the contact to retrieve
+
+    Returns:
+        Contact object with all fields including custom fields
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/contacts/{contact_id}"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
@@ -497,8 +755,25 @@ async def get_contact(contact_id: int)-> Dict[str, Any]:
         return response.json()
 
 @mcp.tool()
-async def search_contacts(query: str)-> list[Dict[str, Any]]:
-    """Search for contacts in Freshdesk."""
+async def search_contacts(query: str) -> list[Dict[str, Any]]:
+    """Search for contacts using autocomplete in Freshdesk.
+
+    LIMITATIONS:
+        - This uses the autocomplete API which returns LIMITED results (not paginated)
+        - Searches by name prefix only (case insensitive)
+        - Cannot search with substrings: "John" works, "ohn" does NOT
+        - Returns only id and name fields
+
+    For comprehensive contact retrieval:
+        - Use list_contacts() with email parameter for exact email lookup
+        - Use list_contacts(company_id=X) to get all contacts in a company
+
+    Args:
+        query: Search term (name prefix, e.g. "John" matches "John Smith")
+
+    Returns:
+        List of matching contacts with id and name only (limited results)
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/contacts/autocomplete"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
@@ -509,8 +784,16 @@ async def search_contacts(query: str)-> list[Dict[str, Any]]:
         return response.json()
 
 @mcp.tool()
-async def update_contact(contact_id: int, contact_fields: Dict[str, Any])-> Dict[str, Any]:
-    """Update a contact in Freshdesk."""
+async def update_contact(contact_id: int, contact_fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Update a contact in Freshdesk.
+
+    Args:
+        contact_id: The ID of the contact to update
+        contact_fields: Dict of fields to update (e.g., {'name': 'New Name', 'email': 'new@email.com'})
+
+    Returns:
+        Updated contact object
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/contacts/{contact_id}"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
@@ -815,7 +1098,24 @@ async def update_agent(agent_id: int, agent_fields: Dict[str, Any]) -> Dict[str,
 
 @mcp.tool()
 async def search_agents(query: str) -> list[Dict[str, Any]]:
-    """Search for agents in Freshdesk."""
+    """Search for agents using autocomplete in Freshdesk.
+
+    LIMITATIONS:
+        - This uses the autocomplete API which returns LIMITED results (not paginated)
+        - Searches by name or email prefix (case insensitive)
+        - Cannot search with substrings: "John" works, "ohn" does NOT
+        - Returns only basic agent info
+
+    For comprehensive agent retrieval:
+        - Use get_agents() with email parameter for exact email lookup
+        - Use get_agents() with pagination to list all agents
+
+    Args:
+        query: Search term (name/email prefix)
+
+    Returns:
+        List of matching agents (limited results)
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/agents/autocomplete?term={query}"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
@@ -825,7 +1125,24 @@ async def search_agents(query: str) -> list[Dict[str, Any]]:
         return response.json()
 @mcp.tool()
 async def list_groups(page: Optional[int] = 1, per_page: Optional[int] = 30)-> list[Dict[str, Any]]:
-    """List all groups in Freshdesk."""
+    """List all groups in Freshdesk with pagination.
+
+    Pagination:
+        - Default: 30 groups per page
+        - Max per_page: 100
+        - Use page parameter to iterate through results
+        - Check if returned count < per_page to detect last page
+
+    Args:
+        page: Page number (default: 1)
+        per_page: Results per page (1-100, default: 30)
+
+    Returns:
+        List of group objects. Each group includes:
+        - id, name, description, business_hour_id
+        - escalate_to, unassigned_for, agent_ids
+        - created_at, updated_at
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/groups"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
@@ -1055,7 +1372,29 @@ Notes:
 
 @mcp.tool()
 async def list_companies(page: Optional[int] = 1, per_page: Optional[int] = 30) -> Dict[str, Any]:
-    """List all companies in Freshdesk with pagination support."""
+    """List all companies in Freshdesk with pagination support.
+
+    Pagination:
+        - Default: 30 companies per page
+        - Max per_page: 100
+        - Use page parameter to iterate through results
+        - Response includes pagination info with next_page/prev_page
+
+    Args:
+        page: Page number (default: 1)
+        per_page: Results per page (1-100, default: 30)
+
+    Returns:
+        Dict with:
+        - companies: Array of company objects
+        - pagination: {current_page, next_page, prev_page, per_page}
+
+        Each company includes:
+        - id, name, description, domains, note
+        - health_score, account_tier, renewal_date, industry
+        - custom_fields (including premium_support, plan, etc.)
+        - created_at, updated_at
+    """
     # Validate input parameters
     if page < 1:
         return {"error": "Page number must be greater than 0"}
@@ -1103,7 +1442,14 @@ async def list_companies(page: Optional[int] = 1, per_page: Optional[int] = 30) 
 
 @mcp.tool()
 async def view_company(company_id: int) -> Dict[str, Any]:
-    """Get a company in Freshdesk."""
+    """Get a single company by ID from Freshdesk.
+
+    Args:
+        company_id: The ID of the company to retrieve
+
+    Returns:
+        Company object with all fields including custom fields
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/companies/{company_id}"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}",
@@ -1122,7 +1468,24 @@ async def view_company(company_id: int) -> Dict[str, Any]:
 
 @mcp.tool()
 async def search_companies(query: str) -> Dict[str, Any]:
-    """Search for companies in Freshdesk."""
+    """Search for companies by name using autocomplete in Freshdesk.
+
+    LIMITATIONS:
+        - This uses the autocomplete API which returns LIMITED results (not paginated)
+        - Searches by company name prefix only (case insensitive)
+        - Cannot search with substrings: "Acme" works, "cme" does NOT
+        - Returns only id and name fields
+
+    For comprehensive company retrieval:
+        - Use list_companies() with pagination to list all companies
+        - Use view_company(company_id) for full company details
+
+    Args:
+        query: Company name prefix to search for (e.g. "Acme" matches "Acme Inc.")
+
+    Returns:
+        Dict with 'companies' array containing {id, name} for matches (limited results)
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/companies/autocomplete"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}",
@@ -1143,7 +1506,22 @@ async def search_companies(query: str) -> Dict[str, Any]:
 
 @mcp.tool()
 async def find_company_by_name(name: str) -> Dict[str, Any]:
-    """Find a company by name in Freshdesk."""
+    """Find a company by name using autocomplete in Freshdesk.
+
+    NOTE: This is an alias for search_companies() with the same limitations.
+
+    LIMITATIONS:
+        - Uses autocomplete API - returns LIMITED results (not paginated)
+        - Searches by name prefix only (case insensitive)
+        - Cannot search with substrings: "Acme" works, "cme" does NOT
+        - Returns only id and name fields
+
+    Args:
+        name: Company name prefix to search for
+
+    Returns:
+        Dict with 'companies' array containing {id, name} for matches
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/companies/autocomplete"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}",
