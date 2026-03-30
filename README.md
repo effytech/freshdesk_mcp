@@ -11,6 +11,10 @@ An MCP server implementation that integrates with Freshdesk, enabling AI models 
 - **AI Model Support**: Enables AI models to perform support operations through Freshdesk
 - **Automated Ticket Management**: Handle ticket creation, updates, and responses
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/effytech-freshdesk-mcp).
+
 ## Components
 
 ### Tools
