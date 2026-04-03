@@ -25,3 +25,16 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 freshdesk-mcp = "freshdesk_mcp.server:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/freshdesk_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

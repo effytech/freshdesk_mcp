@@ -1,223 +1,147 @@
 # Freshdesk MCP Server
-[![smithery badge](https://smithery.ai/badge/@effytech/freshdesk_mcp)](https://smithery.ai/server/@effytech/freshdesk_mcp)
 
-[![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/effytech/freshdesk_mcp)](https://archestra.ai/mcp-catalog/effytech__freshdesk_mcp)
+Fork of [effytech/freshdesk_mcp](https://github.com/effytech/freshdesk_mcp) with improvements including full conversation pagination and streamlined deployment.
 
-An MCP server implementation that integrates with Freshdesk, enabling AI models to interact with Freshdesk modules and perform various support operations.
+An MCP server that integrates with Freshdesk, enabling any AI model or MCP-compatible client to manage tickets, contacts, companies, knowledge base articles, canned responses, and more.
 
 ## Features
 
-- **Freshdesk Integration**: Seamless interaction with Freshdesk API endpoints
-- **AI Model Support**: Enables AI models to perform support operations through Freshdesk
-- **Automated Ticket Management**: Handle ticket creation, updates, and responses
+- **59 Tools** across tickets, agents, contacts, companies, groups, canned responses, solutions, and field management
+- **2 Prompts** (`create_ticket`, `create_reply`) to guide AI models through Freshdesk payloads
+- **MCP ToolAnnotations** on every tool for safe AI-driven automation
+- **Multi-tenant HTTP**: one deployment serves many Freshdesk accounts via per-connection query string credentials
+- **Read-only mode** via `FRESHDESK_TICKETS_READ_ONLY`
+- **Full conversation pagination**: `get_ticket_conversation` fetches all pages transparently
 
-## Components
+## Prerequisites
 
-### Tools
+- Python 3.10+
+- Freshdesk API key (from **Profile Settings > API Key** in Freshdesk)
+- [`uv`](https://docs.astral.sh/uv/) (`pip install uv` or `brew install uv`)
 
-The server offers several tools for Freshdesk operations:
+## Setup as Local MCP Server (stdio)
 
-- `create_ticket`: Create new support tickets
-  - **Inputs**:
-    - `subject` (string, required): Ticket subject
-    - `description` (string, required): Ticket description
-    - `source` (number, required): Ticket source code
-    - `priority` (number, required): Ticket priority level
-    - `status` (number, required): Ticket status code
-    - `email` (string, optional): Email of the requester
-    - `requester_id` (number, optional): ID of the requester
-    - `custom_fields` (object, optional): Custom fields to set on the ticket
-    - `additional_fields` (object, optional): Additional top-level fields
+For clients that launch the server locally (Claude Desktop, Cursor, Windsurf, etc.), add this to the client's MCP config file:
 
-- `update_ticket`: Update existing tickets
-  - **Inputs**:
-    - `ticket_id` (number, required): ID of the ticket to update
-    - `ticket_fields` (object, required): Fields to update
-
-- `delete_ticket`: Delete a ticket
-  - **Inputs**:
-    - `ticket_id` (number, required): ID of the ticket to delete
-
-- `search_tickets`: Search for tickets based on criteria
-  - **Inputs**:
-    - `query` (string, required): Search query string
-
-- `get_ticket_fields`: Get all ticket fields
-  - **Inputs**:
-    - None
-
-- `get_tickets`: Get all tickets
-  - **Inputs**:
-    - `page` (number, optional): Page number to fetch
-    - `per_page` (number, optional): Number of tickets per page
-
-- `get_ticket`: Get a single ticket
-  - **Inputs**:
-    - `ticket_id` (number, required): ID of the ticket to get
-
-- `get_ticket_conversation`: Get conversation for a ticket
-  - **Inputs**:
-    - `ticket_id` (number, required): ID of the ticket
-
-- `create_ticket_reply`: Reply to a ticket
-  - **Inputs**:
-    - `ticket_id` (number, required): ID of the ticket
-    - `body` (string, required): Content of the reply
-
-- `create_ticket_note`: Add a note to a ticket
-  - **Inputs**:
-    - `ticket_id` (number, required): ID of the ticket
-    - `body` (string, required): Content of the note
-
-- `update_ticket_conversation`: Update a conversation
-  - **Inputs**:
-    - `conversation_id` (number, required): ID of the conversation
-    - `body` (string, required): Updated content
-
-- `view_ticket_summary`: Get the summary of a ticket
-  - **Inputs**:
-    - `ticket_id` (number, required): ID of the ticket
-
-- `update_ticket_summary`: Update the summary of a ticket
-  - **Inputs**:
-    - `ticket_id` (number, required): ID of the ticket
-    - `body` (string, required): New summary content
-
-- `delete_ticket_summary`: Delete the summary of a ticket
-  - **Inputs**:
-    - `ticket_id` (number, required): ID of the ticket
-
-- `get_agents`: Get all agents
-  - **Inputs**:
-    - `page` (number, optional): Page number
-    - `per_page` (number, optional): Number of agents per page
-
-- `view_agent`: Get a single agent
-  - **Inputs**:
-    - `agent_id` (number, required): ID of the agent
-
-- `create_agent`: Create a new agent
-  - **Inputs**:
-    - `agent_fields` (object, required): Agent details
-
-- `update_agent`: Update an agent
-  - **Inputs**:
-    - `agent_id` (number, required): ID of the agent
-    - `agent_fields` (object, required): Fields to update
-
-- `search_agents`: Search for agents
-  - **Inputs**:
-    - `query` (string, required): Search query
-
-- `list_contacts`: Get all contacts
-  - **Inputs**:
-    - `page` (number, optional): Page number
-    - `per_page` (number, optional): Contacts per page
-
-- `get_contact`: Get a single contact
-  - **Inputs**:
-    - `contact_id` (number, required): ID of the contact
-
-- `search_contacts`: Search for contacts
-  - **Inputs**:
-    - `query` (string, required): Search query
-
-- `update_contact`: Update a contact
-  - **Inputs**:
-    - `contact_id` (number, required): ID of the contact
-    - `contact_fields` (object, required): Fields to update
-
-- `list_companies`: Get all companies
-  - **Inputs**:
-    - `page` (number, optional): Page number
-    - `per_page` (number, optional): Companies per page
-
-- `view_company`: Get a single company
-  - **Inputs**:
-    - `company_id` (number, required): ID of the company
-
-- `search_companies`: Search for companies
-  - **Inputs**:
-    - `query` (string, required): Search query
-
-- `find_company_by_name`: Find a company by name
-  - **Inputs**:
-    - `name` (string, required): Company name
-
-- `list_company_fields`: Get all company fields
-  - **Inputs**:
-    - None
-
-## Getting Started
-
-### Installing via Smithery
-
-To install freshdesk_mcp for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@effytech/freshdesk_mcp):
-
-```bash
-npx -y @smithery/cli install @effytech/freshdesk_mcp --client claude
-```
-
-### Prerequisites
-
-- A Freshdesk account (sign up at [freshdesk.com](https://freshdesk.com))
-- Freshdesk API key
-- `uvx` installed (`pip install uv` or `brew install uv`)
-
-### Configuration
-
-1. Generate your Freshdesk API key from the Freshdesk admin panel
-2. Set up your domain and authentication details
-
-### Usage with Claude Desktop
-
-1. Install Claude Desktop if you haven't already
-2. Add the following configuration to your `claude_desktop_config.json`:
+**Claude Desktop** -- edit `claude_desktop_config.json`:
 
 ```json
-"mcpServers": {
-  "freshdesk-mcp": {
-    "command": "uvx",
-    "args": [
-        "freshdesk-mcp"
-    ],
-    "env": {
-      "FRESHDESK_API_KEY": "<YOUR_FRESHDESK_API_KEY>",
-      "FRESHDESK_DOMAIN": "<YOUR_FRESHDESK_DOMAIN>"
+{
+  "mcpServers": {
+    "freshdesk-mcp": {
+      "command": "uvx",
+      "args": ["freshdesk-mcp"],
+      "env": {
+        "FRESHDESK_API_KEY": "<YOUR_API_KEY>",
+        "FRESHDESK_DOMAIN": "yourcompany.freshdesk.com",
+        "FRESHDESK_TICKETS_READ_ONLY": "false"
+      }
     }
   }
 }
 ```
 
-**Important Notes**:
-- Replace `YOUR_FRESHDESK_API_KEY` with your actual Freshdesk API key
-- Replace `YOUR_FRESHDESK_DOMAIN` with your Freshdesk domain (e.g., `yourcompany.freshdesk.com`)
+**Cursor** -- edit `.cursor/mcp.json` in your project root (or global settings):
 
-## Example Operations
+```json
+{
+  "mcpServers": {
+    "freshdesk-mcp": {
+      "command": "uvx",
+      "args": ["freshdesk-mcp"],
+      "env": {
+        "FRESHDESK_API_KEY": "<YOUR_API_KEY>",
+        "FRESHDESK_DOMAIN": "yourcompany.freshdesk.com",
+        "FRESHDESK_TICKETS_READ_ONLY": "false"
+      }
+    }
+  }
+}
+```
 
-Once configured, you can ask Claude to perform operations like:
+The format is the same for any MCP client that supports stdio. Replace `<YOUR_API_KEY>` with your Freshdesk API key and `yourcompany.freshdesk.com` with your actual domain.
 
-- "Create a new ticket with subject 'Payment Issue for customer A101' and description as 'Reaching out for a payment issue in the last month for customer A101', where customer email is a101@acme.com and set priority to high"
-- "Update the status of ticket #12345 to 'Resolved'"
-- "List all high-priority tickets assigned to the agent John Doe"
-- "List previous tickets of customer A101 in last 30 days"
+## Setup as Remote Connector (HTTP)
 
+For clients that connect to a remote URL (Claude.ai, or any HTTP MCP client), deploy the server and connect via URL.
+
+### Deploy on Railway
+
+1. Deploy this repo with the root `Dockerfile`
+2. Set environment variables:
+   - `MCP_TRANSPORT=http`
+   - `FASTMCP_STATELESS_HTTP=true`
+   - Do **not** set `PORT` (Railway injects it automatically)
+3. Set health check path to `/health`
+
+### Connect from Claude.ai
+
+In Claude.ai, add a custom MCP connector with this URL:
+
+```
+https://<your-railway-host>/mcp?freshdesk_domain=yourcompany.freshdesk.com&freshdesk_api_key=<YOUR_API_KEY>
+```
+
+The same URL format works with any remote MCP client that supports Streamable HTTP.
+
+> **Security**: API key in query string can appear in logs and browser history. Prefer env-based auth where possible.
+
+## Tools
+
+59 tools organized by module:
+
+| Module | Tools | Operations |
+|--------|-------|------------|
+| Tickets | 17 | CRUD, search, conversations (auto-paginated), replies, notes, summaries, fields |
+| Agents | 5 | List, view, create, update, search |
+| Contacts | 5 | List, view, search, update, field properties |
+| Contact Fields | 4 | List, view, create, update |
+| Companies | 5 | List, view, search, find by name, fields |
+| Groups | 4 | List, view, create, update |
+| Canned Responses | 7 | Folders + responses: list, view, create, update |
+| Solutions / KB | 12 | Categories, folders, articles: list, view, create, update |
+
+## Usage
+
+Once the server is connected, you can interact with Freshdesk in natural language. Examples:
+
+- "Show me ticket #12345 and its full conversation"
+- "Create a high-priority ticket for customer support@acme.com about a billing issue"
+- "Reply to ticket #12345 saying the issue has been resolved"
+- "Search for all open tickets assigned to the Support group"
+- "List all agents and find who is in the Sales group"
+- "Find the company named Acme Corp and show their contact details"
+- "Add a private note to ticket #12345 with the investigation results"
+- "Show me all canned responses in the Billing folder"
+- "Create a knowledge base article about password reset in the FAQ category"
+- "What custom fields are available on tickets?"
+
+The AI model will automatically select the right tool based on your request. All 59 tools are discoverable via the MCP protocol.
+
+## Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `MCP_TRANSPORT` | `stdio` (default) or `http` |
+| `PORT` | HTTP listen port (auto-set by Railway) |
+| `FASTMCP_STATELESS_HTTP` | `true` recommended for Railway |
+| `FRESHDESK_DOMAIN` | Freshdesk host (stdio / fallback) |
+| `FRESHDESK_API_KEY` | API key (stdio / fallback) |
+| `FRESHDESK_TICKETS_READ_ONLY` | Block ticket mutations when `true` |
 
 ## Testing
 
-For testing purposes, you can start the server manually:
-
 ```bash
-uvx freshdesk-mcp --env FRESHDESK_API_KEY=<your_api_key> --env FRESHDESK_DOMAIN=<your_domain>
+pip install -e ".[dev]"
+pytest -q
 ```
 
 ## Troubleshooting
 
-- Verify your Freshdesk API key and domain are correct
-- Ensure proper network connectivity to Freshdesk servers
-- Check API rate limits and quotas
-- Verify the `uvx` command is available in your PATH
+- **Auth errors**: verify API key and domain; for HTTP mode check URL-encoding of query params
+- **404 on `/`**: expected — MCP lives at `/mcp`, health at `/health`
+- **Railway unhealthy**: confirm the process binds `0.0.0.0:$PORT` and `/health` returns 200
 
 ## License
 
-This MCP server is licensed under the MIT License. See the LICENSE file in the project repository for full details.
+MIT License. See [LICENSE](LICENSE).
