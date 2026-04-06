@@ -1,4 +1,12 @@
 import asyncio
+import os
+import sys
+from pathlib import Path
+
+SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
 from freshdesk_mcp.server import get_ticket, update_ticket, get_ticket_conversation, update_ticket_conversation, get_agents, list_canned_responses, list_solution_articles, list_solution_categories, list_solution_folders, list_groups, create_group, create_contact_field, create_canned_response_folder, update_canned_response_folder, create_canned_response, update_canned_response, view_canned_response, view_ticket_summary, update_ticket_summary, delete_ticket_summary, delete_solution_article, delete_solution_folder, delete_solution_category, search_solution_articles
 
 async def test_get_ticket():
@@ -138,16 +146,25 @@ async def test_view_canned_response():
     print(result)
 
 async def test_delete_solution_article():
+    if not os.getenv("RUN_DESTRUCTIVE_TESTS"):
+        print("Skipping test_delete_solution_article (set RUN_DESTRUCTIVE_TESTS=1 to run)")
+        return
     article_id = 1  # Replace with a test article Id
     result = await delete_solution_article(article_id)
     print(result)
 
 async def test_delete_solution_folder():
+    if not os.getenv("RUN_DESTRUCTIVE_TESTS"):
+        print("Skipping test_delete_solution_folder (set RUN_DESTRUCTIVE_TESTS=1 to run)")
+        return
     folder_id = 1  # Replace with a test folder Id
     result = await delete_solution_folder(folder_id)
     print(result)
 
 async def test_delete_solution_category():
+    if not os.getenv("RUN_DESTRUCTIVE_TESTS"):
+        print("Skipping test_delete_solution_category (set RUN_DESTRUCTIVE_TESTS=1 to run)")
+        return
     category_id = 1  # Replace with a test category Id
     result = await delete_solution_category(category_id)
     print(result)
