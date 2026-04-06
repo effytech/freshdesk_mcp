@@ -1,14 +1,16 @@
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
-import json
-import os
-import sys
 import asyncio
+import httpx
+import sys
+from pathlib import Path
 
-# Add the parent directory to the path so we can import the module
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import src.freshdesk_mcp.server as server_module
-from src.freshdesk_mcp.server import (
+SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+import freshdesk_mcp.server as server_module
+from freshdesk_mcp.server import (
     delete_solution_article,
     delete_solution_folder,
     delete_solution_category,
@@ -37,14 +39,13 @@ class TestDeleteSolutionArticle(unittest.TestCase):
         mock_response.raise_for_status = MagicMock()
 
         mock_client = _make_async_client_mock(mock_response)
-        with patch("src.freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
+        with patch("freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
             result = asyncio.run(delete_solution_article(42))
 
         self.assertTrue(result.get("success"))
         self.assertIn("message", result)
 
     def test_delete_propagates_http_error(self):
-        import httpx
 
         mock_response = MagicMock()
         mock_response.status_code = 404
@@ -55,7 +56,7 @@ class TestDeleteSolutionArticle(unittest.TestCase):
         )
 
         mock_client = _make_async_client_mock(mock_response)
-        with patch("src.freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
+        with patch("freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
             result = asyncio.run(delete_solution_article(999))
 
         self.assertIn("error", result)
@@ -72,14 +73,13 @@ class TestDeleteSolutionFolder(unittest.TestCase):
         mock_response.raise_for_status = MagicMock()
 
         mock_client = _make_async_client_mock(mock_response)
-        with patch("src.freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
+        with patch("freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
             result = asyncio.run(delete_solution_folder(10))
 
         self.assertTrue(result.get("success"))
         self.assertIn("message", result)
 
     def test_delete_propagates_http_error(self):
-        import httpx
 
         mock_response = MagicMock()
         mock_response.status_code = 403
@@ -90,7 +90,7 @@ class TestDeleteSolutionFolder(unittest.TestCase):
         )
 
         mock_client = _make_async_client_mock(mock_response)
-        with patch("src.freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
+        with patch("freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
             result = asyncio.run(delete_solution_folder(999))
 
         self.assertIn("error", result)
@@ -107,14 +107,13 @@ class TestDeleteSolutionCategory(unittest.TestCase):
         mock_response.raise_for_status = MagicMock()
 
         mock_client = _make_async_client_mock(mock_response)
-        with patch("src.freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
+        with patch("freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
             result = asyncio.run(delete_solution_category(5))
 
         self.assertTrue(result.get("success"))
         self.assertIn("message", result)
 
     def test_delete_propagates_http_error(self):
-        import httpx
 
         mock_response = MagicMock()
         mock_response.status_code = 500
@@ -125,7 +124,7 @@ class TestDeleteSolutionCategory(unittest.TestCase):
         )
 
         mock_client = _make_async_client_mock(mock_response)
-        with patch("src.freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
+        with patch("freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
             result = asyncio.run(delete_solution_category(999))
 
         self.assertIn("error", result)
@@ -149,7 +148,7 @@ class TestSearchSolutionArticles(unittest.TestCase):
         mock_response.json = MagicMock(return_value=sample_articles)
 
         mock_client = _make_async_client_mock(mock_response)
-        with patch("src.freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
+        with patch("freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
             result = asyncio.run(search_solution_articles(term="reset password", page=1, per_page=10))
 
         self.assertIn("articles", result)
@@ -173,7 +172,7 @@ class TestSearchSolutionArticles(unittest.TestCase):
         mock_response.json = MagicMock(return_value=[])
 
         mock_client = _make_async_client_mock(mock_response)
-        with patch("src.freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
+        with patch("freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
             result = asyncio.run(search_solution_articles(term="test", page=2, per_page=30))
 
         self.assertEqual(result["pagination"]["current_page"], 2)
@@ -189,7 +188,6 @@ class TestSearchSolutionArticles(unittest.TestCase):
         self.assertIn("error", result)
 
     def test_search_propagates_http_error(self):
-        import httpx
 
         mock_response = MagicMock()
         mock_response.status_code = 401
@@ -201,7 +199,7 @@ class TestSearchSolutionArticles(unittest.TestCase):
         mock_response.headers = {}
 
         mock_client = _make_async_client_mock(mock_response)
-        with patch("src.freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
+        with patch("freshdesk_mcp.server.httpx.AsyncClient", return_value=mock_client):
             result = asyncio.run(search_solution_articles(term="test"))
 
         self.assertIn("error", result)
