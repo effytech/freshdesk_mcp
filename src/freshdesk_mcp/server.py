@@ -763,6 +763,103 @@ async def update_solution_article(article_id: int, article_fields: Dict[str, Any
         return response.json()
 
 @mcp.tool()
+async def delete_solution_article(article_id: int) -> Dict[str, Any]:
+    """Delete a solution article in Freshdesk."""
+    url = f"https://{FRESHDESK_DOMAIN}/api/v2/solutions/articles/{article_id}"
+    headers = {
+        "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
+    }
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.delete(url, headers=headers)
+            if response.status_code == 204:
+                return {"success": True, "message": "Solution article deleted successfully"}
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": f"Failed to delete solution article: {str(e)}"}
+        except Exception as e:
+            return {"error": f"An unexpected error occurred: {str(e)}"}
+
+@mcp.tool()
+async def delete_solution_folder(folder_id: int) -> Dict[str, Any]:
+    """Delete a solution folder in Freshdesk."""
+    url = f"https://{FRESHDESK_DOMAIN}/api/v2/solutions/folders/{folder_id}"
+    headers = {
+        "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
+    }
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.delete(url, headers=headers)
+            if response.status_code == 204:
+                return {"success": True, "message": "Solution folder deleted successfully"}
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": f"Failed to delete solution folder: {str(e)}"}
+        except Exception as e:
+            return {"error": f"An unexpected error occurred: {str(e)}"}
+
+@mcp.tool()
+async def delete_solution_category(category_id: int) -> Dict[str, Any]:
+    """Delete a solution category in Freshdesk."""
+    url = f"https://{FRESHDESK_DOMAIN}/api/v2/solutions/categories/{category_id}"
+    headers = {
+        "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
+    }
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.delete(url, headers=headers)
+            if response.status_code == 204:
+                return {"success": True, "message": "Solution category deleted successfully"}
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": f"Failed to delete solution category: {str(e)}"}
+        except Exception as e:
+            return {"error": f"An unexpected error occurred: {str(e)}"}
+
+@mcp.tool()
+async def search_solution_articles(term: str, page: int = 1, per_page: int = 30) -> Dict[str, Any]:
+    """Search for solution articles in the Freshdesk knowledge base."""
+    if page < 1:
+        return {"error": "Page number must be greater than 0"}
+    if per_page < 1 or per_page > 100:
+        return {"error": "Page size must be between 1 and 100"}
+
+    url = f"https://{FRESHDESK_DOMAIN}/api/v2/solutions/articles/search"
+    headers = {
+        "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
+    }
+    params = {
+        "term": term,
+        "page": page,
+        "per_page": per_page
+    }
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, headers=headers, params=params)
+            response.raise_for_status()
+
+            link_header = response.headers.get('Link', '')
+            pagination_info = parse_link_header(link_header)
+            articles = response.json()
+
+            return {
+                "articles": articles,
+                "pagination": {
+                    "current_page": page,
+                    "next_page": pagination_info.get("next"),
+                    "prev_page": pagination_info.get("prev"),
+                    "per_page": per_page
+                }
+            }
+        except httpx.HTTPStatusError as e:
+            return {"error": f"Failed to search solution articles: {str(e)}"}
+        except Exception as e:
+            return {"error": f"An unexpected error occurred: {str(e)}"}
+
+@mcp.tool()
 async def view_agent(agent_id: int)-> Dict[str, Any]:
     """View an agent in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/agents/{agent_id}"
