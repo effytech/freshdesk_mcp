@@ -1,5 +1,5 @@
 import asyncio
-from freshdesk_mcp.server import get_ticket, update_ticket, get_ticket_conversation, update_ticket_conversation, get_agents, list_canned_responses, list_solution_articles, list_solution_categories, list_solution_folders, list_groups, create_group, create_contact_field, create_canned_response_folder, update_canned_response_folder, create_canned_response, update_canned_response, view_canned_response, view_ticket_summary, update_ticket_summary, delete_ticket_summary
+from freshdesk_mcp.server import get_ticket, update_ticket, get_ticket_conversation, update_ticket_conversation, get_agents, list_canned_responses, list_solution_articles, list_solution_categories, list_solution_folders, list_groups, create_group, create_contact_field, create_canned_response_folder, update_canned_response_folder, create_canned_response, update_canned_response, view_canned_response, view_ticket_summary, update_ticket_summary, delete_ticket_summary, delete_solution_article, delete_solution_folder, delete_solution_category, search_solution_articles
 
 async def test_get_ticket():
     ticket_id = "1289" #Replace with a test ticket Id
@@ -137,6 +137,25 @@ async def test_view_canned_response():
     result = await view_canned_response(canned_response_id)
     print(result)
 
+async def test_delete_solution_article():
+    article_id = 1  # Replace with a test article Id
+    result = await delete_solution_article(article_id)
+    print(result)
+
+async def test_delete_solution_folder():
+    folder_id = 1  # Replace with a test folder Id
+    result = await delete_solution_folder(folder_id)
+    print(result)
+
+async def test_delete_solution_category():
+    category_id = 1  # Replace with a test category Id
+    result = await delete_solution_category(category_id)
+    print(result)
+
+async def test_search_solution_articles():
+    result = await search_solution_articles(term="how to")
+    print(result)
+
 if __name__ == "__main__":
     # asyncio.run(test_get_ticket())
     # asyncio.run(test_update_ticket())
@@ -156,3 +175,7 @@ if __name__ == "__main__":
     # asyncio.run(test_create_canned_response())
     # asyncio.run(test_view_canned_response())
     # asyncio.run(test_update_canned_response())
+    # asyncio.run(test_delete_solution_article())
+    # asyncio.run(test_delete_solution_folder())
+    # asyncio.run(test_delete_solution_category())
+    # asyncio.run(test_search_solution_articles())
