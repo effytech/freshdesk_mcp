@@ -163,19 +163,64 @@ class CannedResponseCreate(BaseModel):
 
 @mcp.tool()
 async def get_ticket_fields() -> Dict[str, Any]:
-    """Get ticket fields from Freshdesk."""
+    """Get all ticket fields from Freshdesk.
+
+    Returns a dictionary with a 'fields' key containing the list of
+    ticket field definitions.
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/ticket_fields"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
     }
     async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers)
-        return response.json()
+        try:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            # Freshdesk returns a list; wrap it so the return type is always a dict
+            if isinstance(data, list):
+                return {"fields": data}
+            return data
+        except httpx.HTTPStatusError as e:
+            return {"error": f"Failed to fetch ticket fields: {str(e)}"}
+        except Exception as e:
+            return {"error": f"An unexpected error occurred: {str(e)}"}
 
 
 @mcp.tool()
-async def get_tickets(page: Optional[int] = 1, per_page: Optional[int] = 30) -> Dict[str, Any]:
-    """Get tickets from Freshdesk with pagination support."""
+async def get_tickets(
+    page: Optional[int] = 1,
+    per_page: Optional[int] = 30,
+    filter: Optional[str] = None,
+    requester_id: Optional[int] = None,
+    email: Optional[str] = None,
+    company_id: Optional[int] = None,
+    updated_since: Optional[str] = None,
+    order_by: Optional[str] = None,
+    order_type: Optional[str] = None,
+    include: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Get tickets from Freshdesk with pagination, filtering, and sorting.
+
+    Args:
+        page: Page number (default 1).
+        per_page: Results per page, 1-100 (default 30).
+        filter: Predefined filter name. One of: "new_and_my_open",
+                "watching", "spam", "deleted".
+                Note: when using a predefined filter, the requester_id,
+                email, company_id, and updated_since params are ignored.
+        requester_id: Filter by requester user ID.
+        email: Filter by requester email address.
+        company_id: Filter by company ID.
+        updated_since: Return tickets updated after this datetime
+                       (ISO 8601 format, e.g. "2025-01-15T00:00:00Z").
+        order_by: Sort field. One of: "created_at", "due_by",
+                  "updated_at", "status" (default "created_at").
+        order_type: Sort direction. One of: "asc", "desc" (default "desc").
+        include: Comma-separated list of extra information to include.
+                 Supported values: "stats", "requester", "description",
+                 "company". Example: "requester,company".
+    """
     # Validate input parameters
     if page < 1:
         return {"error": "Page number must be greater than 0"}
@@ -183,12 +228,43 @@ async def get_tickets(page: Optional[int] = 1, per_page: Optional[int] = 30) -> 
     if per_page < 1 or per_page > 100:
         return {"error": "Page size must be between 1 and 100"}
 
+    if filter and filter not in ("new_and_my_open", "watching", "spam", "deleted"):
+        return {"error": f"Invalid filter: '{filter}'. Must be one of: new_and_my_open, watching, spam, deleted"}
+
+    if order_by and order_by not in ("created_at", "due_by", "updated_at", "status"):
+        return {"error": f"Invalid order_by: '{order_by}'. Must be one of: created_at, due_by, updated_at, status"}
+
+    if order_type and order_type not in ("asc", "desc"):
+        return {"error": f"Invalid order_type: '{order_type}'. Must be one of: asc, desc"}
+
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets"
 
-    params = {
+    params: Dict[str, Any] = {
         "page": page,
-        "per_page": per_page
+        "per_page": per_page,
     }
+
+    # When a predefined filter is used, the Freshdesk API ignores
+    # requester_id/email/company_id/updated_since.
+    if filter:
+        params["filter"] = filter
+    else:
+        if requester_id is not None:
+            params["requester_id"] = requester_id
+        if email is not None:
+            params["email"] = email
+        if company_id is not None:
+            params["company_id"] = company_id
+        if updated_since is not None:
+            params["updated_since"] = updated_since
+
+    # Ordering and include work with all request types
+    if order_by is not None:
+        params["order_by"] = order_by
+    if order_type is not None:
+        params["order_type"] = order_type
+    if include is not None:
+        params["include"] = include
 
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}",
@@ -381,27 +457,91 @@ async def get_ticket(ticket_id: int):
         return response.json()
 
 @mcp.tool()
-async def search_tickets(query: str) -> Dict[str, Any]:
-    """Search for tickets in Freshdesk."""
+async def search_tickets(
+    query: str,
+    page: Optional[int] = 1,
+) -> Dict[str, Any]:
+    """Search for tickets in Freshdesk using a query string.
+
+    Args:
+        query: Freshdesk search query string. Supports fields like
+               agent_id, group_id, priority, status, tag, type,
+               due_by, fr_due_by, created_at, updated_at, etc.
+               Example: '"agent_id:12345 AND status:2 AND priority:3"'
+        page: Page number for pagination (default 1). Freshdesk search
+              returns up to 30 results per page, max 10 pages.
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/search/tickets"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
     }
-    params = {"query": query}
+    params: Dict[str, Any] = {"query": query}
+    if page and page > 1:
+        params["page"] = page
+
     async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers, params=params)
-        return response.json()
+        try:
+            response = await client.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            error_message = f"Search failed: {str(e)}"
+            try:
+                error_details = e.response.json()
+                if "errors" in error_details:
+                    error_message = f"Validation error: {error_details}"
+            except Exception:
+                pass
+            return {"error": error_message}
+        except Exception as e:
+            return {"error": f"An unexpected error occurred: {str(e)}"}
 
 @mcp.tool()
-async def get_ticket_conversation(ticket_id: int)-> list[Dict[str, Any]]:
-    """Get a ticket conversation in Freshdesk."""
+async def get_ticket_conversation(
+    ticket_id: int,
+    page: Optional[int] = 1,
+    per_page: Optional[int] = 30,
+) -> Dict[str, Any]:
+    """Get a ticket's conversation (replies and notes) from Freshdesk.
+
+    Args:
+        ticket_id: The ID of the ticket.
+        page: Page number for pagination (default 1).
+        per_page: Results per page, 1-100 (default 30).
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets/{ticket_id}/conversations"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
     }
+    params: Dict[str, Any] = {
+        "page": page,
+        "per_page": per_page,
+    }
+
     async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers)
-        return response.json()
+        try:
+            response = await client.get(url, headers=headers, params=params)
+            response.raise_for_status()
+
+            link_header = response.headers.get("Link", "")
+            pagination_info = parse_link_header(link_header)
+
+            conversations = response.json()
+
+            return {
+                "conversations": conversations,
+                "pagination": {
+                    "current_page": page,
+                    "next_page": pagination_info.get("next"),
+                    "prev_page": pagination_info.get("prev"),
+                    "per_page": per_page,
+                },
+            }
+
+        except httpx.HTTPStatusError as e:
+            return {"error": f"Failed to fetch conversations: {str(e)}"}
+        except Exception as e:
+            return {"error": f"An unexpected error occurred: {str(e)}"}
 
 @mcp.tool()
 async def create_ticket_reply(ticket_id: int,body: str)-> Dict[str, Any]:
