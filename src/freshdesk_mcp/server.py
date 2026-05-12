@@ -3,6 +3,10 @@ from mcp.server.fastmcp import FastMCP
 import logging
 import os
 import base64
+import asyncio
+import mimetypes
+from html.parser import HTMLParser
+from pathlib import Path
 from typing import Optional, Dict, Union, Any, List
 from enum import IntEnum, Enum
 import re
@@ -1242,6 +1246,319 @@ async def delete_ticket_summary(ticket_id: int) -> Dict[str, Any]:
             return {"error": f"Failed to delete ticket summary: {str(e)}"}
         except Exception as e:
             return {"error": f"An unexpected error occurred: {str(e)}"}
+
+_DEFAULT_DL_DIR = Path(os.getenv("FRESHDESK_DOWNLOAD_DIR", "/tmp/fd"))
+
+
+def _auth_headers() -> Dict[str, str]:
+    return {
+        "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
+    }
+
+
+async def _fd_get(client: httpx.AsyncClient, path: str, params: Optional[Dict] = None) -> httpx.Response:
+    url = f"https://{FRESHDESK_DOMAIN}/api/v2{path}"
+    r = await client.get(url, headers=_auth_headers(), params=params, timeout=30)
+    r.raise_for_status()
+    return r
+
+
+async def _fetch_all_conversations(client: httpx.AsyncClient, ticket_id: int, per_page: int = 30) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    page = 1
+    while True:
+        r = await _fd_get(client, f"/tickets/{ticket_id}/conversations", {"page": page, "per_page": per_page})
+        chunk = r.json()
+        if not isinstance(chunk, list) or not chunk:
+            break
+        out.extend(chunk)
+        link = r.headers.get("Link", "")
+        nxt = parse_link_header(link).get("next")
+        if not nxt:
+            break
+        page = nxt
+    return out
+
+
+_STATUS_CACHE: Dict[str, Any] = {"fields": None}
+
+
+async def _load_status_map(client: httpx.AsyncClient) -> Dict[int, str]:
+    if _STATUS_CACHE["fields"] is None:
+        r = await _fd_get(client, "/ticket_fields")
+        _STATUS_CACHE["fields"] = r.json()
+    for f in _STATUS_CACHE["fields"] or []:
+        if f.get("name") == "status":
+            choices = f.get("choices") or {}
+            out: Dict[int, str] = {}
+            if isinstance(choices, dict):
+                for k, v in choices.items():
+                    label = v[0] if isinstance(v, list) and v else (v if isinstance(v, str) else str(v))
+                    try:
+                        out[int(k)] = label
+                    except (ValueError, TypeError):
+                        pass
+            elif isinstance(choices, list):
+                for c in choices:
+                    if isinstance(c, dict) and "value" in c:
+                        out[int(c["value"])] = c.get("label", str(c["value"]))
+            return out
+    return {}
+
+
+@mcp.tool()
+async def get_ticket_full(
+    ticket_id: int,
+    include_requester: bool = True,
+    include_agent: bool = True,
+    decode_status: bool = True,
+) -> Dict[str, Any]:
+    """Fetch ticket with ALL conversations (paginated, no truncation), plus optional requester/agent expansion and status label decoding.
+
+    Returns dict with: ticket fields, conversations (full bodies), requester, agent, status_label, attachments_index.
+    """
+    async with httpx.AsyncClient() as client:
+        try:
+            tr = await _fd_get(client, f"/tickets/{ticket_id}", {"include": "requester,stats"})
+            ticket = tr.json()
+            convs = await _fetch_all_conversations(client, ticket_id)
+            ticket["conversations"] = convs
+
+            if include_agent and ticket.get("responder_id"):
+                try:
+                    ar = await _fd_get(client, f"/agents/{ticket['responder_id']}")
+                    ticket["agent"] = ar.json()
+                except Exception as e:
+                    ticket["agent_error"] = str(e)
+
+            if include_requester and ticket.get("requester_id") and "requester" not in ticket:
+                try:
+                    cr = await _fd_get(client, f"/contacts/{ticket['requester_id']}")
+                    ticket["requester"] = cr.json()
+                except Exception as e:
+                    ticket["requester_error"] = str(e)
+
+            if decode_status:
+                smap = await _load_status_map(client)
+                ticket["status_label"] = smap.get(int(ticket.get("status", -1)), f"Custom({ticket.get('status')})")
+
+            attachments_index = []
+            for a in ticket.get("attachments", []) or []:
+                attachments_index.append({"scope": "ticket", "conversation_id": None, **{k: a.get(k) for k in ("id", "name", "content_type", "size", "attachment_url")}})
+            for c in convs:
+                for a in c.get("attachments", []) or []:
+                    attachments_index.append({"scope": "conversation", "conversation_id": c.get("id"), **{k: a.get(k) for k in ("id", "name", "content_type", "size", "attachment_url")}})
+            ticket["attachments_index"] = attachments_index
+
+            return ticket
+        except httpx.HTTPStatusError as e:
+            return {"error": f"HTTP {e.response.status_code}: {e.response.text[:500]}"}
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
+
+async def _download_one(client: httpx.AsyncClient, url: str, dest: Path, size_limit: int = 50 * 1024 * 1024) -> Dict[str, Any]:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    async with client.stream("GET", url, timeout=60, follow_redirects=True) as r:
+        r.raise_for_status()
+        ctype = (r.headers.get("content-type", "application/octet-stream") or "").split(";")[0].strip()
+        if not dest.suffix:
+            ext = mimetypes.guess_extension(ctype) or ""
+            if ext:
+                dest = dest.with_suffix(ext)
+        total = 0
+        with open(dest, "wb") as f:
+            async for chunk in r.aiter_bytes(64 * 1024):
+                total += len(chunk)
+                if total > size_limit:
+                    f.close()
+                    dest.unlink(missing_ok=True)
+                    raise ValueError(f"file exceeds size_limit {size_limit}")
+                f.write(chunk)
+        return {"path": str(dest), "size": total, "content_type": ctype}
+
+
+def _safe_name(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "_", name)[:120] or "file"
+
+
+@mcp.tool()
+async def download_ticket_attachments(
+    ticket_id: int,
+    dest_dir: Optional[str] = None,
+    size_limit_mb: int = 50,
+) -> Dict[str, Any]:
+    """Download all attachments (ticket-level + per-conversation) for a ticket. Returns list of saved file paths + metadata. Files saved under dest_dir/<ticket_id>/."""
+    base = Path(dest_dir) if dest_dir else _DEFAULT_DL_DIR
+    target = base / str(ticket_id)
+    size_limit = size_limit_mb * 1024 * 1024
+    saved: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+
+    async with httpx.AsyncClient() as client:
+        try:
+            tr = await _fd_get(client, f"/tickets/{ticket_id}")
+            ticket = tr.json()
+            convs = await _fetch_all_conversations(client, ticket_id)
+
+            jobs: List[tuple[Dict[str, Any], str, Path]] = []
+            for a in ticket.get("attachments", []) or []:
+                fname = f"t{ticket_id}_a{a['id']}_{_safe_name(a['name'])}"
+                jobs.append((a, "ticket", target / fname))
+            for c in convs:
+                for a in c.get("attachments", []) or []:
+                    fname = f"t{ticket_id}_c{c['id']}_a{a['id']}_{_safe_name(a['name'])}"
+                    jobs.append((a, f"conv:{c['id']}", target / fname))
+
+            async def _job(att, scope, path):
+                try:
+                    res = await _download_one(client, att["attachment_url"], path, size_limit)
+                    return {"ok": True, "scope": scope, "id": att["id"], "name": att["name"],
+                            "freshdesk_content_type": att.get("content_type"), **res}
+                except Exception as e:
+                    return {"ok": False, "scope": scope, "id": att.get("id"), "name": att.get("name"),
+                            "error": f"{type(e).__name__}: {e}"}
+
+            results = await asyncio.gather(*[_job(a, s, p) for a, s, p in jobs])
+            for r in results:
+                (saved if r.get("ok") else errors).append(r)
+
+            return {"ticket_id": ticket_id, "dest_dir": str(target), "saved": saved, "errors": errors,
+                    "count_saved": len(saved), "count_errors": len(errors)}
+        except httpx.HTTPStatusError as e:
+            return {"error": f"HTTP {e.response.status_code}: {e.response.text[:500]}"}
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
+
+class _ImgExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.imgs: List[Dict[str, str]] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != "img":
+            return
+        d = {k.lower(): (v or "") for k, v in attrs}
+        self.imgs.append(d)
+
+
+def _parse_imgs(html: str) -> List[Dict[str, str]]:
+    p = _ImgExtractor()
+    try:
+        p.feed(html or "")
+    except Exception:
+        pass
+    return p.imgs
+
+
+def _cid_match(cid: str, attachments: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    cid_norm = cid.split("@")[0].lower()
+    cid_stem = cid_norm.rsplit(".", 1)[0]
+    for a in attachments:
+        name = (a.get("name") or "").lower()
+        stem = name.rsplit(".", 1)[0]
+        if stem == cid_stem or name == cid_norm:
+            return a
+    return None
+
+
+@mcp.tool()
+async def extract_inline_images(
+    ticket_id: int,
+    dest_dir: Optional[str] = None,
+    size_limit_mb: int = 25,
+) -> Dict[str, Any]:
+    """Pull inline images from ticket description + every conversation body. Resolves cid: refs against attachments and downloads remote http(s) <img src> URLs. Returns saved paths + source mapping."""
+    base = Path(dest_dir) if dest_dir else _DEFAULT_DL_DIR
+    target = base / str(ticket_id) / "inline"
+    size_limit = size_limit_mb * 1024 * 1024
+    saved: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+
+    async with httpx.AsyncClient() as client:
+        try:
+            tr = await _fd_get(client, f"/tickets/{ticket_id}")
+            ticket = tr.json()
+            convs = await _fetch_all_conversations(client, ticket_id)
+
+            all_attachments: List[Dict[str, Any]] = list(ticket.get("attachments", []) or [])
+            for c in convs:
+                all_attachments.extend(c.get("attachments", []) or [])
+
+            sources: List[tuple[str, str]] = [("description", ticket.get("description") or "")]
+            for c in convs:
+                sources.append((f"conv:{c.get('id')}", c.get("body") or ""))
+
+            jobs: List[tuple[str, str, str, Path]] = []
+            seen_urls: set[str] = set()
+            for src_label, html in sources:
+                for img in _parse_imgs(html):
+                    url = img.get("src", "")
+                    if not url:
+                        continue
+                    if url.startswith("cid:"):
+                        cid = url[4:]
+                        match = _cid_match(cid, all_attachments)
+                        if match:
+                            fname = f"t{ticket_id}_inline_cid_{_safe_name(match['name'])}"
+                            jobs.append((src_label, cid, match["attachment_url"], target / fname))
+                        else:
+                            errors.append({"source": src_label, "cid": cid, "error": "no matching attachment"})
+                    elif url.startswith(("http://", "https://", "//")):
+                        if url.startswith("//"):
+                            url = "https:" + url
+                        if url in seen_urls:
+                            continue
+                        seen_urls.add(url)
+                        stem = _safe_name(url.rsplit("/", 1)[-1].split("?")[0]) or "img"
+                        fname = f"t{ticket_id}_inline_{len(jobs)}_{stem}"
+                        jobs.append((src_label, url, url, target / fname))
+                    elif url.startswith("data:"):
+                        m = re.match(r"data:([^;]+);base64,(.+)", url)
+                        if m:
+                            mime, b64 = m.group(1), m.group(2)
+                            ext = mimetypes.guess_extension(mime) or ".bin"
+                            target.mkdir(parents=True, exist_ok=True)
+                            path = target / f"t{ticket_id}_inline_data_{len(saved)}{ext}"
+                            try:
+                                data = base64.b64decode(b64)
+                                if len(data) > size_limit:
+                                    raise ValueError("data: URI exceeds size_limit")
+                                path.write_bytes(data)
+                                saved.append({"source": src_label, "kind": "data-uri", "path": str(path),
+                                              "size": len(data), "content_type": mime})
+                            except Exception as e:
+                                errors.append({"source": src_label, "error": f"data uri: {e}"})
+
+            async def _job(src, ref, url, path):
+                try:
+                    res = await _download_one(client, url, path, size_limit)
+                    return {"source": src, "kind": "cid" if not ref.startswith("http") else "url",
+                            "ref": ref, **res}
+                except Exception as e:
+                    return {"source": src, "ref": ref, "error": f"{type(e).__name__}: {e}"}
+
+            results = await asyncio.gather(*[_job(s, r, u, p) for s, r, u, p in jobs])
+            for r in results:
+                (saved if "path" in r else errors).append(r)
+
+            return {"ticket_id": ticket_id, "dest_dir": str(target),
+                    "saved": saved, "errors": errors,
+                    "count_saved": len(saved), "count_errors": len(errors)}
+        except httpx.HTTPStatusError as e:
+            return {"error": f"HTTP {e.response.status_code}: {e.response.text[:500]}"}
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
+
+@mcp.tool()
+async def decode_ticket_status(status_id: int) -> Dict[str, Any]:
+    """Resolve a Freshdesk ticket status integer to its label using ticket_fields metadata."""
+    async with httpx.AsyncClient() as client:
+        smap = await _load_status_map(client)
+    return {"status_id": status_id, "label": smap.get(int(status_id), f"Custom({status_id})"), "all_statuses": smap}
+
 
 def main():
     logging.info("Starting Freshdesk MCP server")

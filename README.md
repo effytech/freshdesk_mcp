@@ -148,6 +148,33 @@ The server offers several tools for Freshdesk operations:
   - **Inputs**:
     - None
 
+#### Bulk fetch / archaeology
+
+- `get_ticket_full`: Fetch ticket + ALL conversations (paginated, no truncation), with optional requester/agent expansion and status label decoding
+  - **Inputs**:
+    - `ticket_id` (number, required): ID of the ticket
+    - `include_requester` (bool, optional, default `true`)
+    - `include_agent` (bool, optional, default `true`)
+    - `decode_status` (bool, optional, default `true`) — adds `status_label`
+  - **Returns**: ticket fields, `conversations[]`, `requester`, `agent`, `status_label`, `attachments_index`
+  - **Note**: Output for busy tickets routinely exceeds 256 KB / 25 k tokens. MCP hosts will spill the result to disk; slice with `jq` rather than re-reading whole.
+
+- `download_ticket_attachments`: Download all attachments (ticket-level + per-conversation) to disk
+  - **Inputs**:
+    - `ticket_id` (number, required)
+    - `dest_dir` (string, optional): defaults to `$FRESHDESK_DOWNLOAD_DIR` or `/tmp/fd`
+    - `size_limit_mb` (number, optional, default `50`): per-file cap; larger files reported as errors
+
+- `extract_inline_images`: Resolve `cid:` references against attachments and download remote `<img src>` URLs from description + every conversation body
+  - **Inputs**:
+    - `ticket_id` (number, required)
+    - `dest_dir` (string, optional)
+    - `size_limit_mb` (number, optional, default `25`)
+
+- `decode_ticket_status`: Resolve a status integer to its label (handles custom statuses)
+  - **Inputs**:
+    - `status_id` (number, required)
+
 ## Getting Started
 
 ### Installing via Smithery
