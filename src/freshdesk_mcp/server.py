@@ -199,6 +199,7 @@ async def get_tickets(
     order_by: Optional[str] = None,
     order_type: Optional[str] = None,
     include: Optional[str] = None,
+    agent_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Get tickets from Freshdesk with pagination, filtering, and sorting.
 
@@ -220,6 +221,12 @@ async def get_tickets(
         include: Comma-separated list of extra information to include.
                  Supported values: "stats", "requester", "description",
                  "company". Example: "requester,company".
+        agent_id: Filter by assigned agent ID. Uses the Freshdesk search
+                  API under the hood, which returns a fixed 30 results per
+                  page (max 10 pages) and cannot be combined with filter,
+                  requester_id, email, company_id, updated_since, order_by,
+                  order_type, or include. Use search_tickets for more
+                  complex queries.
     """
     # Validate input parameters
     if page < 1:
@@ -236,6 +243,57 @@ async def get_tickets(
 
     if order_type and order_type not in ("asc", "desc"):
         return {"error": f"Invalid order_type: '{order_type}'. Must be one of: asc, desc"}
+
+    # agent_id filtering is only supported by the Freshdesk search API,
+    # which has its own constraints (fixed 30 per page, max 10 pages, no
+    # other list params). Route there and normalize the response shape.
+    if agent_id is not None:
+        incompatible = {
+            "filter": filter,
+            "requester_id": requester_id,
+            "email": email,
+            "company_id": company_id,
+            "updated_since": updated_since,
+            "order_by": order_by,
+            "order_type": order_type,
+            "include": include,
+        }
+        conflicts = [name for name, value in incompatible.items() if value is not None]
+        if conflicts:
+            return {"error": f"agent_id cannot be combined with: {', '.join(conflicts)}. Use search_tickets for complex queries."}
+        if per_page != 30:
+            return {"error": "agent_id filtering uses the Freshdesk search API, which returns a fixed 30 results per page. Leave per_page at 30."}
+        if page > 10:
+            return {"error": "agent_id filtering uses the Freshdesk search API, which supports a maximum of 10 pages."}
+
+        url = f"https://{FRESHDESK_DOMAIN}/api/v2/search/tickets"
+        headers = {
+            "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
+        }
+        params: Dict[str, Any] = {"query": f'"agent_id:{agent_id}"'}
+        if page > 1:
+            params["page"] = page
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                data = response.json()
+                total = data.get("total", 0)
+                return {
+                    "tickets": data.get("results", []),
+                    "total": total,
+                    "pagination": {
+                        "current_page": page,
+                        "next_page": page + 1 if page * 30 < total and page < 10 else None,
+                        "prev_page": page - 1 if page > 1 else None,
+                        "per_page": 30
+                    }
+                }
+            except httpx.HTTPStatusError as e:
+                return {"error": f"Failed to fetch tickets: {str(e)}"}
+            except Exception as e:
+                return {"error": f"An unexpected error occurred: {str(e)}"}
 
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets"
 
