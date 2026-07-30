@@ -63,6 +63,10 @@ The server offers several tools for Freshdesk operations:
   - **Inputs**:
     - `ticket_id` (number, required): ID of the ticket
     - `body` (string, required): Content of the reply
+    - `cc_emails` (array of strings, optional): Additional email addresses added to the 'cc' field of the outgoing email. These supplement the ticket requester, who always remains the primary recipient
+    - `bcc_emails` (array of strings, optional): Additional email addresses added to the 'bcc' field of the outgoing email. These supplement the ticket requester, who always remains the primary recipient
+    - `from_email` (string, optional): Email address the reply is sent from
+    - `user_id` (number, optional): ID of the agent who is adding the reply
 
 - `create_ticket_note`: Add a note to a ticket
   - **Inputs**:

@@ -404,8 +404,26 @@ async def get_ticket_conversation(ticket_id: int)-> list[Dict[str, Any]]:
         return response.json()
 
 @mcp.tool()
-async def create_ticket_reply(ticket_id: int,body: str)-> Dict[str, Any]:
-    """Create a reply to a ticket in Freshdesk."""
+async def create_ticket_reply(
+    ticket_id: int,
+    body: str,
+    cc_emails: Optional[List[str]] = None,
+    bcc_emails: Optional[List[str]] = None,
+    from_email: Optional[str] = None,
+    user_id: Optional[int] = None
+) -> Dict[str, Any]:
+    """Create a reply to a ticket in Freshdesk.
+
+    Args:
+        ticket_id: ID of the ticket to reply to
+        body: Content of the reply in HTML format
+        cc_emails: Additional email addresses added to the 'cc' field of the outgoing email.
+            These supplement the ticket requester, who always remains the primary recipient
+        bcc_emails: Additional email addresses added to the 'bcc' field of the outgoing email.
+            These supplement the ticket requester, who always remains the primary recipient
+        from_email: Email address the reply is sent from. Defaults to the global support email
+        user_id: ID of the agent who is adding the reply
+    """
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets/{ticket_id}/reply"
     headers = {
         "Authorization": f"Basic {base64.b64encode(f'{FRESHDESK_API_KEY}:X'.encode()).decode()}"
@@ -413,6 +431,14 @@ async def create_ticket_reply(ticket_id: int,body: str)-> Dict[str, Any]:
     data = {
         "body": body
     }
+    if cc_emails:
+        data["cc_emails"] = cc_emails
+    if bcc_emails:
+        data["bcc_emails"] = bcc_emails
+    if from_email:
+        data["from_email"] = from_email
+    if user_id:
+        data["user_id"] = user_id
     async with httpx.AsyncClient() as client:
         response = await client.post(url, headers=headers, json=data)
         return response.json()
