@@ -1,5 +1,5 @@
 # Freshdesk MCP Server
-[![smithery badge](https://smithery.ai/badge/@effytech/freshdesk_mcp)](https://smithery.ai/server/@effytech/freshdesk_mcp)
+[![LightNow](https://lightnow.ai/badge/io.github.effytech/freshdesk_mcp)](https://lightnow.ai/servers/io.github.effytech/freshdesk_mcp)
 
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/effytech/freshdesk_mcp)](https://archestra.ai/mcp-catalog/effytech__freshdesk_mcp)
 
